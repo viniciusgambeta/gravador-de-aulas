@@ -10,7 +10,11 @@ export class AudioMixer {
     this.micAnalyser = this.ctx.createAnalyser();
     this.micAnalyser.fftSize = 1024;
     this.micGain.connect(this.micAnalyser);
-    this.micGain.connect(this.dest);
+    // Lip sync: the voice is held back by the camera's delay, so what is
+    // recorded is already in sync (the meter above stays instant).
+    this.micDelay = this.ctx.createDelay(1);
+    this.micGain.connect(this.micDelay);
+    this.micDelay.connect(this.dest);
 
     this.sysGain = this.ctx.createGain();
     this.sysGain.connect(this.dest);
@@ -41,6 +45,10 @@ export class AudioMixer {
 
   setMicGain(value) {
     this.micGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02);
+  }
+
+  setDelay(ms) {
+    this.micDelay.delayTime.value = Math.min(900, Math.max(0, ms || 0)) / 1000;
   }
 
   get hasInput() {

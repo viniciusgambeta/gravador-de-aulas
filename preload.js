@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   media: {
     probe: (file) => ipcRenderer.invoke('media:probe', file),
     waveform: (file) => ipcRenderer.invoke('media:waveform', file),
+    measureSync: (buf) => ipcRenderer.invoke('sync:measure', buf),
     url: (file) => ipcRenderer.invoke('media:url', file),
     previewVideo: (file) => ipcRenderer.invoke('media:previewVideo', file),
     proxyVideo: (file) => ipcRenderer.invoke('media:proxyVideo', file),

@@ -1,7 +1,7 @@
 {
   "name": "gravador-de-aulas",
   "productName": "Gravador de Aulas",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Grava tela + câmera + microfone, edita e exporta videoaulas leves em MP4 (Windows).",
   "main": "main.js",
   "author": "Vinicius Gambeta",

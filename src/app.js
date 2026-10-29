@@ -47,7 +47,8 @@ const prefs = {
   introEnabled: true,
   transition: null, // "a few moments later" clip, horizontal
   transitionV: null, // vertical
-  audioDelay: 100, // ms: cameras deliver frames late, so the audio is delayed to match
+  audioDelay: 100, // ms: delay assumed for a camera that was never calibrated
+  syncByCamera: {}, // camera label -> measured delay (ms), from the clap test
   logo: null, // watermark image { path, url, name, width, height }
   logoOn: true,
   logoPos: 'tr',
@@ -175,8 +176,7 @@ const cutter = new Cutter({
   confirm: (o) => confirmBox(o),
   getIntro: (project) => ({ intro: introFor(orientationOfProject(project || {})), enabled: prefs.introEnabled }),
   getTransition: (project) => transitionFor(orientationOfProject(project || {})) || null,
-  getAudioDelay: () => prefs.audioDelay,
-  onAudioDelay: (ms) => { prefs.audioDelay = ms; persist(); },
+  getAudioDelay: () => prefs.audioDelay, // recordings made before the delay was applied while recording
   onSetupTransition: () => openSettings('transition'),
   getFps: () => prefs.fps,
   onExport: (project, opts) => exportProject(project, opts),
@@ -857,6 +857,103 @@ async function setCamera(id) {
   renderChips();
   renderLayers();
   editor.render();
+  applySync();
+}
+
+// ---------------------------------------------------------------- lip sync
+// A camera delivers each frame a little after it was seen (exposure, USB,
+// driver), while the microphone is nearly instant. That delay is measured
+// once per camera (clap test) and the voice is held back by it while
+// recording, so every file already comes out in sync.
+
+const cameraKey = () => (feeds.camera ? feeds.camera.track.label || S.cameraId : '');
+
+function cameraDelay() {
+  if (!feeds.camera) return 0;
+  const ms = prefs.syncByCamera[cameraKey()];
+  return Number.isFinite(ms) ? ms : prefs.audioDelay;
+}
+
+function applySync() {
+  mixer.setDelay(cameraDelay());
+  const note = $('#set-sync-note');
+  if (!note) return;
+  const ms = prefs.syncByCamera[cameraKey()];
+  note.textContent = !feeds.camera ? 'Escolha uma câmera para calibrar.'
+    : Number.isFinite(ms) ? `${cameraName(S.cameraId) || 'Câmera'}: atraso de ${ms} ms, compensado em toda gravação.`
+      : `Esta câmera ainda não foi calibrada (usando ${prefs.audioDelay} ms). Leva uns 10 segundos.`;
+  $('#set-sync-cal').disabled = !feeds.camera || R.state !== 'idle';
+}
+
+const calib = { token: 0 };
+
+function openCalibration() {
+  if (!feeds.camera || R.state !== 'idle') return;
+  const v = $('#sync-video');
+  v.srcObject = new MediaStream([feeds.camera.track]);
+  v.style.transform = prefs.mirror ? 'scaleX(-1)' : '';
+  v.play().catch(() => {});
+  setCalib('Fique de frente para a câmera, com as mãos aparecendo na imagem. Ao começar, bata palmas 4 vezes, devagar, com uma pausa entre elas.', '', 'Começar');
+  $('#sync-modal').hidden = false;
+}
+
+function closeCalibration() {
+  calib.token++;
+  if (calib.rec && calib.rec.state !== 'inactive') calib.rec.stop();
+  $('#sync-modal').hidden = true;
+  $('#sync-video').srcObject = null;
+  mixer.setDelay(cameraDelay());
+}
+
+function setCalib(text, big, button) {
+  $('#sync-msg').textContent = text;
+  $('#sync-count').textContent = big;
+  $('#sync-count').hidden = !big;
+  const b = $('#sync-start');
+  b.hidden = !button;
+  b.textContent = button || '';
+}
+
+async function runCalibration() {
+  if (!mixer.micSource) { setCalib('Escolha um microfone primeiro.', '', 'Tentar de novo'); return; }
+  const token = ++calib.token;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const clone = feeds.camera.track.clone();
+  mixer.setDelay(0); // measure the raw delay
+  mixer.resume();
+  const chunks = [];
+  const rec = new MediaRecorder(new MediaStream([clone, mixer.track]), { mimeType: pickMime(30), videoBitsPerSecond: 4e6 });
+  calib.rec = rec;
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const stopped = new Promise((r) => { rec.onstop = r; });
+  rec.start();
+  try {
+    for (const n of ['3', '2', '1']) {
+      setCalib('Prepare as mãos…', n);
+      await wait(700);
+      if (token !== calib.token) return;
+    }
+    setCalib('Bata palmas 4 vezes, devagar.', '👏');
+    await wait(6500);
+    if (token !== calib.token) return;
+    rec.stop();
+    await stopped;
+    setCalib('Medindo…', '');
+    const res = await api.media.measureSync(await new Blob(chunks).arrayBuffer());
+    if (token !== calib.token) return;
+    // + half a frame: while recording, each tick draws the newest camera frame.
+    const ms = Math.round(res.ms + 500 / prefs.fps);
+    prefs.syncByCamera = { ...prefs.syncByCamera, [cameraKey()]: ms };
+    persist();
+    setCalib(`Pronto! Esta câmera entrega a imagem ${ms} ms depois do som. As próximas gravações com ela já saem sincronizadas.`, '✓', 'Medir de novo');
+  } catch (err) {
+    if (token === calib.token) setCalib(cleanError(err), '', 'Tentar de novo');
+  } finally {
+    if (rec.state !== 'inactive') rec.stop();
+    clone.stop();
+    calib.rec = null;
+    if (token === calib.token) applySync();
+  }
 }
 
 let micToken = 0;
@@ -1427,6 +1524,7 @@ function renderSettings() {
   segOn('#set-countdown', prefs.countdown);
   $$('#set-fps button').forEach((b) => { b.disabled = R.state !== 'idle'; });
   $('#set-mirror').checked = prefs.mirror;
+  applySync();
   $('#set-editor').checked = prefs.openEditor;
   $('#set-level').checked = prefs.levelAudio;
   $('#set-keep').checked = prefs.keepOriginal;
@@ -1536,6 +1634,8 @@ function bindSettings() {
     renderSettings();
   });
   $('#set-mirror').addEventListener('change', (e) => setMirror(e.target.checked));
+  $('#set-sync-cal').addEventListener('click', openCalibration);
+  $('#sync-start').addEventListener('click', runCalibration);
   $('#set-editor').addEventListener('change', (e) => { prefs.openEditor = e.target.checked; persist(); });
   $('#set-level').addEventListener('change', (e) => { prefs.levelAudio = e.target.checked; persist(); });
   $('#set-keep').addEventListener('change', (e) => { prefs.keepOriginal = e.target.checked; persist(); });
@@ -1582,6 +1682,7 @@ async function openOutDir() {
 // ================================================================== modals / toasts / confirm
 
 function closeModals() {
+  if (!$('#sync-modal').hidden) closeCalibration();
   if (!$('#sources-modal').hidden) closeSources();
   closeSettings();
   closeResult();
@@ -1610,6 +1711,7 @@ function bindModals() {
         if (bd.id === 'sources-modal') closeSources();
         else if (bd.id === 'result-modal') closeResult();
         else if (bd.id === 'settings-modal') closeSettings();
+        else if (bd.id === 'sync-modal') closeCalibration();
         else bd.hidden = true;
       }
     });
@@ -1809,6 +1911,8 @@ async function startRecording() {
   R.mime = mime;
   R.orientation = S.orientation;
   R.stereo = !!(prefs.systemAudio && streams.sys);
+  R.syncMs = cameraDelay();
+  mixer.setDelay(R.syncMs);
   R.startedAt = 0;
   R.recorders = {};
   R.clones = [];
@@ -1899,7 +2003,7 @@ async function stopRecording({ discard = false } = {}) {
       const d = DIMS[R.orientation];
       const res = await api.rec.finish({
         mime: R.mime,
-        meta: { orientation: R.orientation, width: d.w, height: d.h, fps: prefs.fps, stereo: R.stereo, screenCrop: activeCrop() },
+        meta: { orientation: R.orientation, width: d.w, height: d.h, fps: prefs.fps, stereo: R.stereo, screenCrop: activeCrop(), syncMs: R.syncMs },
       });
       if (res.warning) toast(res.warning, 'error', 9000);
       project = {
@@ -1911,6 +2015,7 @@ async function stopRecording({ discard = false } = {}) {
         height: d.h,
         duration: res.duration || duration / 1000,
         removed: [],
+        audioDelay: 0, // already in sync: the voice was delayed while recording
         introApplied: false,
       };
       gallery.markStale();
@@ -1930,7 +2035,7 @@ async function stopRecording({ discard = false } = {}) {
 function openProject(project) {
   closeModals();
   if (prefs.openEditor) cutter.open(project);
-  else exportProject(project, { seq: null, removed: [], inserts: [], audioDelay: prefs.audioDelay, intro: prefs.introEnabled ? introFor(project.orientation) : null });
+  else exportProject(project, { seq: null, removed: [], inserts: [], audioDelay: project.audioDelay ?? prefs.audioDelay, intro: prefs.introEnabled ? introFor(project.orientation) : null });
 }
 
 function setRecUI() {

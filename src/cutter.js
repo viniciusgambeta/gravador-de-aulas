@@ -28,7 +28,7 @@ function fmtLen(t) {
 
 export class Cutter {
   constructor(opts) {
-    Object.assign(this, opts); // api, toast, confirm, getIntro, getTransition, getFps, getAudioDelay, onAudioDelay, onExport, onClose, onSetupIntro, onSetupTransition
+    Object.assign(this, opts); // api, toast, confirm, getIntro, getTransition, getFps, getAudioDelay, onExport, onClose, onSetupIntro, onSetupTransition
     this.el = $('#cutter');
     this.players = [$('#cut-video'), $('#cut-video-b')];
     this.clip = $('#cut-video-t');
@@ -222,7 +222,9 @@ export class Cutter {
 
   // ---------------------------------------------------------------- audio (lip sync preview)
 
-  // Keeps the sound trailing the picture by the lip-sync delay.
+  // Keeps the sound with the picture that is actually on screen (frame
+  // callbacks say when each frame is shown). Small drifts are absorbed by
+  // nudging the audio's speed, which is inaudible; only big jumps seek.
   syncAudio(force = false) {
     const it = this.seq[this.item];
     const au = this.audio;
@@ -230,23 +232,35 @@ export class Cutter {
       if (!au.paused) au.pause();
       return;
     }
-    const want = this.active.currentTime - this.audioDelay / 1000;
+    const rate = SPEEDS[this.speedIdx];
+    const now = performance.now();
+    const f = this.lastFrame;
+    const shown = f && f.v === this.active && now - f.at < 250 ? f.media + ((now - f.at) / 1000) * rate : this.active.currentTime;
+    const want = shown - this.audioDelay / 1000;
     if (want < 0) {
       if (!au.paused) au.pause(); // the first moments: the delayed audio has not started yet
       return;
     }
-    if (force || Math.abs(au.currentTime - want) > 0.08) au.currentTime = want;
+    const drift = au.currentTime - want;
+    if (force || Math.abs(drift) > 0.15) {
+      au.currentTime = want;
+      au.playbackRate = rate;
+    } else {
+      au.playbackRate = Math.abs(drift) < 0.01 ? rate : rate * (1 - clamp(drift * 2, -0.06, 0.06));
+    }
     if (au.paused) au.play().catch(() => {});
   }
 
   applyDelay() {
     if (this.seq && this.seq.length && this.p) setTimeout(() => this.seek(this.t), 0);
     if (this.playing) this.syncAudio(true);
-    $('#cut-sync').innerHTML = `${icon('speaker', 15)} ${this.audioDelay} ms`;
+    const ms = this.audioDelay;
+    const label = ms ? `${ms > 0 ? '+' : '−'}${Math.abs(ms)} ms` : '0 ms';
+    $('#cut-sync').innerHTML = `${icon('speaker', 15)} ${ms ? label : 'Sincronia'}`;
     const input = $('#cut-sync-ms');
-    input.value = this.audioDelay;
-    input.style.setProperty('--p', `${(this.audioDelay / 400) * 100}%`);
-    $('#cut-sync-val').textContent = `${this.audioDelay} ms`;
+    input.value = ms;
+    input.style.setProperty('--p', `${((ms - input.min) / (input.max - input.min)) * 100}%`);
+    $('#cut-sync-val').textContent = label;
   }
 
   // ---------------------------------------------------------------- time math
@@ -714,6 +728,7 @@ export class Cutter {
     this.watching = v;
     const onFrame = (_now, meta) => {
       if (!this.playing || v !== this.active) { this.watching = null; return; }
+      this.lastFrame = { v, media: meta.mediaTime, at: meta.expectedDisplayTime };
       const it = this.seq[this.item];
       if (it && it.t === 's' && meta.mediaTime - this.vOff >= it.b - 1.5 / this.fps) {
         this.watching = null;
@@ -943,11 +958,9 @@ export class Cutter {
       this.audioDelay = Number(e.target.value);
       this.applyDelay();
     });
-    $('#cut-sync-ms').addEventListener('change', () => this.onAudioDelay(this.audioDelay));
     $('#cut-sync-reset').addEventListener('click', () => {
       this.audioDelay = 0;
       this.applyDelay();
-      this.onAudioDelay(0);
     });
     $('#cut-remove').addEventListener('click', () => this.removeSelection());
     $('#cut-trim-start').addEventListener('click', () => this.removeBefore());

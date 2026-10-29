@@ -15,6 +15,7 @@ fs.mkdirSync(out, { recursive: true });
 const SLOT = { intro: 'horizontal', introV: 'vertical', transition: 'transicao-horizontal', transitionV: 'transicao-vertical', logo: 'logo' };
 const prefs = { ...(src.prefs || {}) };
 delete prefs.outDir; // each person uses their own Videos folder
+delete prefs.syncByCamera; // measured per camera on each PC
 for (const [key, slot] of Object.entries(SLOT)) {
   const it = prefs[key];
   if (!it || !it.path || !fs.existsSync(it.path)) { prefs[key] = null; continue; }

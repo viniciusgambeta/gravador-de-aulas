@@ -237,6 +237,10 @@
           <div class="set-label"><b>Espelhar câmera</b><small>Inverte a imagem como num espelho.</small></div>
           <input type="checkbox" class="switch" id="set-mirror" />
         </div>
+        <div class="set-row">
+          <div class="set-label"><b>Sincronia da voz com a boca</b><small id="set-sync-note">—</small></div>
+          <button class="btn" id="set-sync-cal">Calibrar com palmas</button>
+        </div>
 
         </section>
         <section class="set-pane" data-pane="final" hidden>
@@ -539,9 +543,9 @@
           <button class="btn ghost sm" id="cut-sync" title="Sincronia entre a voz e a boca"></button>
           <div class="pop left" id="cut-sync-pop" hidden>
             <h4>Sincronia do áudio</h4>
-            <p>A câmera entrega a imagem com um pequeno atraso. Se a voz vier antes da boca, aumente o valor até ficar natural na prévia.</p>
-            <label class="pop-slider"><span>Atrasar o áudio em</span><output id="cut-sync-val">0 ms</output>
-              <input type="range" id="cut-sync-ms" min="0" max="400" step="10" value="100" /></label>
+            <p>A sincronia já é compensada na gravação (calibre cada câmera em Configurações → Gravação). Use só para um ajuste fino: se a voz vier antes da boca, aumente.</p>
+            <label class="pop-slider"><span>Ajuste do áudio</span><output id="cut-sync-val">0 ms</output>
+              <input type="range" id="cut-sync-ms" min="-200" max="300" step="10" value="0" /></label>
             <div class="pop-actions"><button class="btn sm ghost" id="cut-sync-reset">Zerar</button></div>
           </div>
         </div>
@@ -603,6 +607,25 @@
       <div class="exp-bar"><span id="exp-fill"></span></div>
       <div class="exp-meta"><span id="exp-pct">0%</span><span id="exp-eta"></span></div>
       <button class="btn sm" id="exp-cancel">Cancelar</button>
+    </div>
+  </div>
+
+  <!-- ============================================================ lip-sync calibration -->
+  <div class="backdrop" id="sync-modal" hidden>
+    <div class="modal modal-sync" role="dialog" aria-labelledby="sync-title">
+      <header class="modal-head">
+        <div><h2 id="sync-title">Calibrar a sincronia</h2></div>
+        <button class="btn ghost icon" data-close title="Fechar"><i data-icon="x"></i></button>
+      </header>
+      <div class="sync-stage"><video id="sync-video" muted playsinline></video><div class="sync-count" id="sync-count" hidden></div></div>
+      <p class="sync-msg" id="sync-msg"></p>
+      <footer class="modal-foot">
+        <span></span>
+        <div class="foot-actions">
+          <button class="btn" data-close>Fechar</button>
+          <button class="btn primary" id="sync-start">Começar</button>
+        </div>
+      </footer>
     </div>
   </div>
 

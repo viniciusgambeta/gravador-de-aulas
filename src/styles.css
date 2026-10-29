@@ -718,6 +718,11 @@ body.editing #btn-open-video, body.editing .title-actions .divider { display: no
 
 /* confirm */
 .modal-confirm { width: min(460px, 100%); }
+.modal-sync { width: min(560px, 100%); }
+.sync-stage { position: relative; margin: 0 20px; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; overflow: hidden; }
+.sync-stage video { width: 100%; height: 100%; object-fit: cover; }
+.sync-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: 72px; font-weight: 700; color: #fff; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6); background: rgba(0, 0, 0, 0.25); }
+.sync-msg { margin: 14px 20px 4px; min-height: 2.8em; line-height: 1.4; }
 .confirm-body { padding: 24px 24px 6px; }
 .confirm-body h3 { margin: 0 0 8px; font: 600 18px var(--font-display); }
 .confirm-body p { margin: 0; color: var(--muted); line-height: 1.55; }

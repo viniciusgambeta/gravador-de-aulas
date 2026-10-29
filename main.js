@@ -314,6 +314,96 @@ function waveform(file) {
   });
 }
 
+// Lip-sync calibration. The person claps a few times in front of the camera:
+// each clap is a sharp click in the audio and, on video, the frame where the
+// hands meet (the motion stops at once). The median gap between the two is
+// the camera's delay exactly as it ends up in a recorded file.
+async function measureSync(file) {
+  const W = 64;
+  const H = 36;
+  const SR = 8000;
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gravador-sync-'));
+  const aFile = path.join(dir, 'a.f32');
+  const vFile = path.join(dir, 'v.gray');
+  try {
+    // Both outputs share the file's timeline: the audio is padded to start at 0,
+    // and showinfo prints each frame's time on that same clock.
+    const log = await new Promise((resolve, reject) => {
+      const proc = spawn(ffmpegPath(), ['-hide_banner', '-y', '-i', file,
+        '-map', '0:a:0', '-af', `aresample=${SR}:async=1:first_pts=0`, '-ac', '1', '-f', 'f32le', aFile,
+        '-map', '0:v:0', '-vf', `scale=${W}:${H},format=gray,showinfo`, '-fps_mode', 'passthrough', '-f', 'rawvideo', vFile,
+      ], { windowsHide: true });
+      let err = '';
+      proc.stderr.on('data', (d) => { err += d.toString(); });
+      proc.on('error', reject);
+      proc.on('close', (code) => (code === 0 ? resolve(err) : reject(new Error(lastLines(err)))));
+    });
+    const pts = [...log.matchAll(/pts_time:\s*(-?[\d.]+)/g)].map((m) => Number(m[1]));
+    const aBuf = await fsp.readFile(aFile);
+    const a = new Float32Array(aBuf.buffer.slice(aBuf.byteOffset, aBuf.byteOffset + aBuf.length - (aBuf.length % 4)));
+    const v = await fsp.readFile(vFile);
+    const px = W * H;
+    const n = Math.min(pts.length, Math.floor(v.length / px));
+    if (n < 30 || a.length < SR) throw new Error('A gravação de teste ficou curta demais.');
+
+    // Claps: 5 ms blocks far louder than the background and than what came just before.
+    const B = SR / 200;
+    const peaks = [];
+    for (let i = 0; i + B <= a.length; i += B) {
+      let m = 0;
+      for (let j = i; j < i + B; j++) m = Math.max(m, Math.abs(a[j]));
+      peaks.push(m);
+    }
+    const sorted = [...peaks].sort((x, y) => x - y);
+    const floor = sorted[Math.floor(sorted.length / 2)];
+    const top = sorted[sorted.length - 1];
+    if (top < 0.05 || top < floor * 8) throw new Error('Não ouvi as palmas. Bata palmas mais forte, perto do microfone.');
+    const claps = [];
+    const order = peaks.map((_, i) => i).filter((i) => peaks[i] >= Math.max(top * 0.3, floor * 8)).sort((x, y) => peaks[y] - peaks[x]);
+    for (const i of order) {
+      if (claps.some((c) => Math.abs(c - i * B) < SR * 0.3)) continue;
+      const p = peaks[i];
+      let on = Math.max(0, i * B - SR * 0.03);
+      while (on < i * B + B && Math.abs(a[on]) < p * 0.3) on++;
+      let pre = 0;
+      const p0 = Math.max(0, on - SR * 0.06);
+      const p1 = Math.max(p0 + 1, on - SR * 0.01);
+      for (let j = p0; j < p1; j++) pre += Math.abs(a[j]);
+      if (p > (pre / (p1 - p0)) * 8) claps.push(on); // a clap starts out of (near) silence; speech does not
+    }
+
+    // Motion: mean change from one frame to the next.
+    const E = new Float64Array(n);
+    for (let k = 1; k < n; k++) {
+      let s = 0;
+      for (let j = 0, o = k * px, q = o - px; j < px; j++) s += Math.abs(v[o + j] - v[q + j]);
+      E[k] = s / px;
+    }
+    // For each clap, the frame after which the motion stops most sharply is
+    // the first one showing the hands together; they met half a frame earlier.
+    const gaps = [];
+    for (const on of claps) {
+      const ta = on / SR;
+      let best = -1;
+      let drop = 0;
+      for (let k = 1; k < n - 1; k++) {
+        if (pts[k] < ta - 0.03 || pts[k] > ta + 0.45) continue;
+        const d = E[k] - E[k + 1];
+        if (d > drop) { drop = d; best = k; }
+      }
+      if (best > 0 && drop > 1.5) gaps.push(pts[best] - (pts[best] - pts[best - 1]) / 2 - ta);
+    }
+    gaps.sort((x, y) => x - y);
+    const med = gaps[Math.floor(gaps.length / 2)];
+    const agree = gaps.filter((g) => Math.abs(g - med) < 0.06);
+    if (agree.length < 2) throw new Error('Não consegui ver as palmas na câmera. Deixe as mãos bem visíveis e bata palmas devagar, com pausas.');
+    const ms = Math.round((agree.reduce((s, g) => s + g, 0) / agree.length) * 1000);
+    return { ms: Math.max(0, ms), claps: agree.length };
+  } finally {
+    fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 function lastLines(text, n = 6) {
   return text.trim().split(/\r?\n/).filter((l) => !/^\s*(frame|size)=/.test(l)).slice(-n).join('\n');
 }
@@ -1227,6 +1317,8 @@ function registerIpc() {
       stereo: !!meta.stereo,
       screenCrop: meta.screenCrop || null,
       hasAudio: info.hasAudio,
+      syncMs: meta.syncMs || 0, // camera delay already compensated while recording
+      audioDelay: 0,
       originals: { main: rel(done.main), camera: rel(done.camera), screen: rel(done.screen) },
       exports: null,
       removed: [],
@@ -1266,6 +1358,11 @@ function registerIpc() {
   // --- media helpers for the editor
   ipcMain.handle('media:probe', (_e, file) => probe(file));
   ipcMain.handle('media:waveform', (_e, file) => waveform(file));
+  ipcMain.handle('sync:measure', async (_e, buf) => {
+    const file = path.join(os.tmpdir(), `gravador-sync-${Date.now()}.mp4`);
+    await fsp.writeFile(file, Buffer.from(buf));
+    try { return await measureSync(file); } finally { fsp.rm(file, { force: true }).catch(() => {}); }
+  });
   ipcMain.handle('media:url', (_e, file) => pathToFileURL(file).href);
   // Video-only copy for the editor's players (no re-encode): a <video> with an
   // audio track opens a Windows audio stream on every play, which takes ~1 s.

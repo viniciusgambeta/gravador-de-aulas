@@ -15,7 +15,8 @@ Se a câmera ou o microfone não aparecerem: Configurações do Windows → Priv
 
 - **Gravação**: layouts horizontais (16:9) e verticais (9:16), cada um com seus ajustes; troca de layout ao vivo (`Alt+Shift+1…9`); 1 arquivo ou 3 (final + câmera + tela); **selecionar só uma área da tela**; logo/marca d'água; áudio do computador; contagem regressiva; barra flutuante que não aparece no vídeo; o PC não dorme durante a gravação; avisos de pouco espaço em disco e de microfone sem som.
 - **Roteiro**: janela flutuante com rolagem automática (teleprompter), invisível na gravação.
-- **Editor**: cortes reais com prévia sem engasgos; remover pausas automaticamente; transições "alguns momentos depois"; intro automática; ajuste de sincronia da voz com a boca; `J`/`K`/`L` (voltar / pausar / acelerar).
+- **Sincronia da voz com a boca**: calibre cada câmera uma vez batendo palmas (Configurações → Gravação). O atraso medido é compensado já na gravação, então os arquivos saem sincronizados.
+- **Editor**: cortes reais com prévia sem engasgos; remover pausas automaticamente; transições "alguns momentos depois"; intro automática; ajuste fino da sincronia; `J`/`K`/`L` (voltar / pausar / acelerar).
 - **Vídeo final**: H.264 compacto (≈100–500 MB por hora), áudio nivelado em −16 LUFS sem estourar.
 - **Galeria**: assistir, editar, renomear, excluir e ver o status de envio ao MDE.
 
